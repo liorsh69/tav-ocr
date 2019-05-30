@@ -1,0 +1,15 @@
+{
+	"test": {
+		"path": "./app/tests/newFolder/$com$/$pn$/$lot$/$mo$/TEST-$pn$-$lot$-$mo$.pdf",
+		"function": "move",
+		"smtp": false
+	},
+	"mo": {
+		"path": "\\\\SERVER\\Path\\Quality Assurance\\$pn$\\$lot$\\MO-$pn$-$lot$-$mo$-$today$.pdf",
+		"function": "move",
+		"smtp": {
+			"email": "group@domain.com",
+			"subject": "MO-$pn$-$lot$-$mo$"
+		}
+	}
+}

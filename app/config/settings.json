@@ -1,0 +1,12 @@
+{
+	"folderToWatch": "\\\\SERVER\\Path\\OCR",
+	"smtp": {
+		"host": "smtp.office365.com",
+		"port": 587,
+		"secure": false,
+		"auth": {
+			"user": "user@domain.com",
+			"pass": "Pa$$w0rd"
+		}
+	}
+}
