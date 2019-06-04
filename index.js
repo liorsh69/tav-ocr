@@ -146,7 +146,7 @@ function handlePdfFile(pdfFile) {
 
 						if (action.smtp) {
 							smtp.sendMail({
-								from: 'scan@tavmedical.com',
+								from: settings.smtp.auth.user,
 								to: action.smtp.email,
 								subject: resolveTemplate(action.smtp.subject),
 								html: `<a href="${finalFileDestination}">${finalFileDestination}</a>`,
@@ -279,22 +279,23 @@ function moveFile(fileToMove, destinationPath) {
  * @param {*} destinationPath
  */
 function copyFile(fileToCopy, destinationPath) {
-	logger.info('Coping File')
-	logger.info(`From: ${fileToCopy}`)
-	logger.info(`To: ${destinationPath}`)
+	logger.info(`Coping File - From: ${fileToCopy} To: ${destinationPath}`)
 
 	try {
 		fse.copy(fileToCopy, destinationPath, err => {
 			if (err) {
 				logger.error(`copyFile rename Failed: ${err}`)
-				return
+				return false
 			} else {
 				logger.info('Successfully copied')
+				return true
 			}
 		})
 	} catch (error) {
 		logger.error(`copyFile Failed: ${error}`)
+		return false
 	}
+	return false
 }
 
 /** replace json parameters in template
