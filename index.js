@@ -12,10 +12,14 @@ const fse = require('fs-extra') // more file system control
 const pdf = require('pdf-poppler') // pdf to jpg
 const Jimp = require('jimp') // image control
 const QrCode = require('qrcode-reader') // qr-code reader
+const getImageData = require('get-image-data')
+const jsQR = require('jsqr')
 const chokidar = require('chokidar') // file system watcher - run ocr when new file is added
 const shell = require('shelljs') // shell cmd
 const nodemailer = require('nodemailer')
 const moment = require('moment')
+const Promise = require('bluebird')
+const sql = require('mssql')
 
 const DEV_MODE = !false
 
@@ -32,6 +36,18 @@ const coordinatesArr = readJson('./app/config/private/coordinates.json', './app/
 
 // SMTP Client
 const smtp = initSmtp()
+
+// sql connection pool if needed
+var poolPromise = false
+if (settings.mssql && settings.mssql.server && settings.mssql.server != '') {
+	poolPromise = new sql.ConnectionPool(settings.mssql)
+		.connect()
+		.then(pool => {
+			logger.info('Connected to MSSQL')
+			return pool
+		})
+		.catch(err => logger.error('Database Connection Failed! Bad Config: ', err))
+}
 
 logger.info('Initializing TAV-OCR')
 const mainWatcher = watchFolder(settings.folderToWatch, handlePdfFile)
@@ -76,7 +92,7 @@ function handlePdfFile(pdfFile) {
 	logger.info('Converting PDF To Image')
 	convertPdf2Jpg(pdfFile, tempImgFolder)
 		.catch(logger.error)
-		.then(res => {
+		.then(async res => {
 			// check temp jpgFile name
 			if (!fs.existsSync(jpgFile)) {
 				const tempJpgFile = jpgFile.replace('-1', '-01')
@@ -87,85 +103,103 @@ function handlePdfFile(pdfFile) {
 
 			logger.info(`PDF Converted To Image: ${jpgFile}`)
 
-			// go over all coordinates and try to get a result
-			for (var coordinatesIdx in coordinatesArr) {
-				const coordinates = coordinatesArr[coordinatesIdx]
-
-				readQR(jpgFile, coordinates, coordinatesIdx)
+			// go over all coordinates and try to get results
+			const readQRresults = await Promise.map(coordinatesArr, (coordinates, coordinatesIdx) => {
+				return readQR(jpgFile, coordinates, coordinatesIdx)
 					.catch(error => {
+						const jpgTestFileExt = path.extname(jpgFile)
+						const jpgTestFileName = path.basename(jpgFile, jpgTestFileExt)
 						logger.error(
 							error
 								? error
-								: `QR not found in coordinates - ${coordinatesIdx}: ${JSON.stringify(coordinates)}`
+								: `QR not found in coordinates - ${jpgTestFileName}-test-${coordinatesIdx}: ${JSON.stringify(
+										coordinates
+								  )}`
 						)
 					})
 					.then(result => {
 						if (!result) {
 							logger.info(`Empty QR result - ${coordinatesIdx}`)
-							return
+							return false
 						}
 
 						logger.info(`QR result - ${coordinatesIdx}: ${result}`)
 
-						var jsonResult
 						try {
 							const resultParseReady = result.replace(/\'/g, '"') // replace all ' with " to allow json.parse
 							logger.info(`QR resultParseReady - ${coordinatesIdx}: ${resultParseReady}`)
 
-							jsonResult = JSON.parse(resultParseReady)
+							const jsonResult = JSON.parse(resultParseReady)
+							return jsonResult
 						} catch (error) {
 							logger.error(`jsonResult parse Failed - ${coordinatesIdx}: ${error}`)
-							return
-						}
-
-						const action = types[jsonResult.type]
-
-						if (!action) {
-							logger.error('Action Not Found')
 							return false
 						}
-
-						if (!action.function) {
-							logger.error('Action Function Not Configured')
-							return false
-						}
-
-						let actionFunction
-						try {
-							actionFunction = eval(action.function)
-						} catch (error) {
-							logger.error('Action Function Not Found')
-							return false
-						}
-
-						const actionFunctionResult = actionFunction(pdfFile, jsonResult, action)
-
-						if (!actionFunctionResult) {
-							logger.warn('Unsuccessfully Action Function')
-						}
-
-						if (action.smtp) {
-							smtp.sendMail({
-								from: settings.smtp.auth.user,
-								to: action.smtp.email,
-								subject: resolveTemplate(action.smtp.subject),
-								html: `<a href="${finalFileDestination}">${finalFileDestination}</a>`,
-							})
-						}
-
-						return true
 					})
-			}
+			})
+
+			let funcDone = false
+			Promise.all(readQRresults).then(readQRresults => {
+				Promise.map(readQRresults, async jsonResult => {
+					if (funcDone) {
+						logger.info('Function Done Already')
+						return false
+					}
+
+					if (!jsonResult) {
+						logger.error(`${pdfFileName}: jsonResult Not Found`)
+						return false
+					}
+
+					const action = types[jsonResult.type]
+
+					if (!action) {
+						logger.error(`${pdfFileName}-${action}: Action Not Found`)
+						return false
+					}
+
+					if (!action.function) {
+						logger.error(`${pdfFileName}-${action.function}: Action Function Not Configured`)
+						return false
+					}
+
+					let actionFunction
+					try {
+						actionFunction = eval(action.function)
+					} catch (error) {
+						logger.error(`${pdfFileName}-${coordinatesIdx}-${action.function}: Action Function Not Found`)
+						return false
+					}
+
+					const actionFunctionResult = actionFunction(pdfFile, jsonResult, action)
+
+					if (!actionFunctionResult || !actionFunctionResult.result) {
+						logger.warn('Unsuccessfully Action Function')
+						return false
+					}
+
+					if (action.smtp) {
+						logger.info(`Sending Email:  ${action.smtp.email}`)
+						smtp.sendMail({
+							from: settings.smtp.auth.user,
+							to: action.smtp.email,
+							subject: await resolveTemplate(jsonResult, action.smtp.subject),
+							html: `<a href="${actionFunctionResult.smtp.link}">${actionFunctionResult.smtp.link}</a>`,
+						})
+
+						logger.info(`Email Sent: ${action.smtp.email}`)
+					}
+
+					funcDone = true
+					return
+				})
+			})
 		})
 }
-/** Move file to folder
- * @param {String} pdfFile - PDF file path
- * @param {Object} jsonResult - QR json result
- * @param {Object} action - action type json object
- */
-function move(pdfFile, jsonResult, action) {
+
+async function move(pdfFile, jsonResult, action) {
 	// resolve file destination from QR JSON result
-	const finalFileDestination = resolveTemplate(jsonResult, action.path)
+	const finalFileDestination = await resolveTemplate(jsonResult, action.path)
 	const finalDestinationFolder = path.dirname(finalFileDestination)
 
 	if (!finalDestinationFolder) {
@@ -178,7 +212,12 @@ function move(pdfFile, jsonResult, action) {
 
 	const fileMoved = moveFile(pdfFile, finalFileDestination)
 
-	return folderCreated && fileMoved
+	return {
+		result: folderCreated && fileMoved,
+		smtp: {
+			link: finalFileDestination,
+		},
+	}
 }
 
 /** convert image QR code to text
@@ -189,6 +228,10 @@ function readQR(jpgFile, coordinates, coordinatesIdx) {
 		.catch(logger.error)
 		.then(image => {
 			return new Promise((resolve, reject) => {
+				const jpgFileExt = path.extname(jpgFile)
+				const jpgFileName = path.basename(jpgFile, jpgFileExt).replace('-1', '')
+				const tempImgFolder = path.dirname(jpgFile)
+
 				var qr = new QrCode()
 				qr.callback = function(err, value) {
 					if (err) {
@@ -205,7 +248,21 @@ function readQR(jpgFile, coordinates, coordinatesIdx) {
 						}
 					}
 
-					resolve(value.result || false)
+					const result = value.result
+						.replace(/\&/g, "'")
+						.replace(/\%/g, "'")
+						.replace(/\+/g, "'")
+						.replace(/\;/g, ':')
+						.replace(/\=/g, '}')
+						.replace(/\(/g, ',')
+
+					if (result) {
+						resolve(result)
+					} else if (value.result) {
+						resolve(value.result)
+					} else {
+						resolve(false)
+					}
 				}
 
 				// crop image to get only the QR code
@@ -217,16 +274,30 @@ function readQR(jpgFile, coordinates, coordinatesIdx) {
 					.quality(100)
 					.resize(500, 500)
 
-				// TEST - save as
+				// save temp images in dev mode
 				if (DEV_MODE) {
-					const jpgFileExt = path.extname(jpgFile)
-					const jpgFileName = path.basename(jpgFile, jpgFileExt).replace('-1', '')
-					const tempImgFolder = path.dirname(jpgFile)
-
 					QRimage.write(path.join(tempImgFolder, jpgFileName + '-test-' + coordinatesIdx + '.jpg'))
 				}
 
-				qr.decode(QRimage.bitmap)
+				// old qr reader
+				// qr.decode(QRimage.bitmap)
+
+				getImageData(QRimage, function(err, info) {
+					if (err) {
+						logger.error(`getImageData Error: ${err}`)
+						resolve(false)
+					}
+					const { data, height, width } = info
+
+					const code = jsQR(data, width, height)
+					if (code) {
+						logger.info(`jsQR Result: ${code.data}`)
+						resolve(code.data)
+					} else {
+						logger.info(`jsQR Result Not Found: ${code}`)
+						resolve(false)
+					}
+				})
 			})
 		})
 }
@@ -256,13 +327,16 @@ function moveFile(fileToMove, destinationPath) {
 	logger.info(`From: ${fileToMove}`)
 	logger.info(`To: ${destinationPath}`)
 
+	const fileToMoveExt = path.extname(fileToMove)
+	const fileToMoveName = path.basename(fileToMove, fileToMoveExt)
+
 	try {
-		fse.move(fileToMove, destinationPath, err => {
+		fse.move(fileToMove, destinationPath, { overwrite: true }, err => {
 			if (err) {
 				logger.error(`moveFile rename Failed: ${err}`)
 				return false
 			} else {
-				logger.info('Successfully moved')
+				logger.info(`${fileToMoveName} - Successfully moved`)
 				return true
 			}
 		})
@@ -279,30 +353,29 @@ function moveFile(fileToMove, destinationPath) {
  * @param {*} destinationPath
  */
 function copyFile(fileToCopy, destinationPath) {
-	logger.info(`Coping File - From: ${fileToCopy} To: ${destinationPath}`)
+	logger.info('Coping File')
+	logger.info(`From: ${fileToCopy}`)
+	logger.info(`To: ${destinationPath}`)
 
 	try {
 		fse.copy(fileToCopy, destinationPath, err => {
 			if (err) {
 				logger.error(`copyFile rename Failed: ${err}`)
-				return false
+				return
 			} else {
 				logger.info('Successfully copied')
-				return true
 			}
 		})
 	} catch (error) {
 		logger.error(`copyFile Failed: ${error}`)
-		return false
 	}
-	return false
 }
 
 /** replace json parameters in template
  * @param {*} jsonObject
  * @param {*} template
  */
-function resolveTemplate(jsonObject, template) {
+async function resolveTemplate(jsonObject, template) {
 	if (!jsonObject) {
 		logger.error('resolveTemplate - Missing Parameter: jsonObject')
 		return
@@ -315,14 +388,47 @@ function resolveTemplate(jsonObject, template) {
 	var tempTemplate = template
 
 	logger.info(`resolveTemplate - Replacing Template: ${template}`)
+
 	// loop over all json keys and replace in template
 	for (var key in jsonObject) {
 		const param = jsonObject[key]
 
 		logger.info(`${key}: ${param}`)
 
-		const regex = new RegExp(`\\$${key}\\$`, 'g')
-		tempTemplate = tempTemplate.replace(regex, param)
+		const objectKeysRegex = new RegExp(`\\$${key}\\$`, 'g')
+		tempTemplate = tempTemplate.replace(objectKeysRegex, param)
+	}
+
+	// check if there are unresolved keys in template
+	const keysRegex = new RegExp(`\\$.*\\$`, 'g')
+	const templateUnresolved = tempTemplate.match(keysRegex)
+
+	if (poolPromise && templateUnresolved) {
+		logger.info(`templateUnresolved: ` + templateUnresolved)
+		// get sql query result in json
+		try {
+			const pool = await poolPromise
+
+			const sqlQuery = `SELECT VHWHLO AS "com", VHPRNO AS "pn", VHMFNO AS "mo", VHBANO AS "lot" FROM MVXJDTA.MWOHED WHERE VHBANO='${jsonObject.lot}'`
+			logger.info('SQL Query:')
+			logger.info(sqlQuery)
+			const sqlResultObj = await pool.request().query(sqlQuery)
+			const sqlResult = sqlResultObj.recordset[0]
+
+			logger.info('SQL RESULT: ' + JSON.stringify(sqlResult)) // TEST
+
+			// loop over sql json result
+			for (var key in sqlResult) {
+				const param = sqlResult[key].replace(new RegExp(/[(\s)(\t)]/, 'g'), '')
+
+				logger.info(`${key}: ${param}`)
+
+				const objectKeysRegex = new RegExp(`\\$${key}\\$`, 'g')
+				tempTemplate = tempTemplate.replace(objectKeysRegex, param)
+			}
+		} catch (error) {
+			logger.error(`SQL Query Error: ` + error)
+		}
 	}
 
 	// replace today's date in template

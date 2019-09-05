@@ -8,5 +8,11 @@
 			"user": "user@domain.com",
 			"pass": "Pa$$w0rd"
 		}
+	},
+	"mssql": {
+		"server": "",
+		"user": "",
+		"password": "",
+		"database": ""
 	}
 }

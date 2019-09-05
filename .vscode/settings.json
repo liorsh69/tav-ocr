@@ -1,5 +1,9 @@
 {
-    "cSpell.words": [
-        "cpps"
-    ]
+	"cSpell.words": ["cpps"],
+	"logViewer.watch": [
+		{
+			"title": "console.log",
+			"pattern": "console.log"
+		}
+	]
 }

@@ -1,6 +1,6 @@
 {
 	"test": {
-		"path": "./app/tests/newFolder/$com$/$pn$/$lot$/$mo$/TEST-$pn$-$lot$-$mo$.pdf",
+		"path": "__dirname/app/tests/newFolder/$com$/$pn$/$lot$/$mo$/TEST-$pn$-$lot$-$mo$.pdf",
 		"function": "move",
 		"smtp": false
 	},

@@ -17,9 +17,9 @@ const {
 mainWatcher.close()
 
 const testParameters = {
-	mo: '0000804646',
-	lot: '1950248201',
-	pn: '4100123',
+	mo: '0000602872',
+	lot: '1960287201T2',
+	pn: '4100771',
 	com: '100',
 }
 
@@ -53,7 +53,7 @@ describe('Read JSON File', function() {
 	})
 })
 
-describe('Handle Template', function() {
+describe('Handle Template', async function() {
 	const template = path.resolve(__dirname, 'newFolder', '$com$', '$pn$', '$lot$', '$mo$')
 	const templateResult = path.resolve(
 		__dirname,
@@ -66,7 +66,7 @@ describe('Handle Template', function() {
 	const jsonResultPath = path.resolve(__dirname, 'json', 'resultTest.json')
 	const jsonResultObj = readJson(jsonResultPath)
 
-	const resolvedTemplate = resolveTemplate(jsonResultObj, template)
+	const resolvedTemplate = await resolveTemplate(jsonResultObj, template)
 
 	it('should replace variables from JSON object', function(done) {
 		expect(resolvedTemplate).to.be.an('string')
@@ -90,8 +90,8 @@ describe('Handle Template', function() {
 	})
 })
 
-describe('Read QR Code', function() {
-	this.timeout(15000)
+describe('Read QR Code', async function() {
+	this.timeout(30000)
 
 	let testWatcher
 	const testWatchFolder = path.resolve(__dirname, 'watch')
@@ -109,16 +109,16 @@ describe('Read QR Code', function() {
 	it('should read QR code from pdf file', function(done) {
 		testWatcher = watchFolder(testWatchFolder, handlePdfFile)
 
-		setTimeout(done, 10000)
+		setTimeout(done, 15000)
 	})
 
-	it('should move the pdf file', function(done) {
+	it('should move the pdf file', async function(done) {
 		testWatcher.close()
 
 		const testAction = readJson(path.resolve(__dirname, '../', 'config', 'types.json'))
-		const resolvedFileTemplate = resolveTemplate(testParameters, testAction.test.path)
+		const resolvedFileTemplate = await resolveTemplate(testParameters, testAction.test.path)
 
-		const fileFound = fs.existsSync(resolvedFileTemplate)
+		const fileFound = fs.existsSync(path.resolve(resolvedFileTemplate))
 		if (!fileFound) {
 			console.error('File Not Found')
 			console.error(resolvedFileTemplate)

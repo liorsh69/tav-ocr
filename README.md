@@ -67,15 +67,8 @@ All logs are being saved in `console.log` to allow easy debugging when running a
         // File destination template
         // $var_name$ will be replaced using QR code data
         "path": "\\\\SERVER\\Path\\Quality Assurance\\$pn$\\$lot$\\MO-$pn$-$lot$-$mo$-$today$.pdf",
-
-        /** Function name to run
-        * Receive 3 arguments:
-        * @param {String} pdfFile - PDF file path
-        * @param {Object} jsonResult - QR json result
-        * @param {Object} action - action type json object
-        */
+        // custom function name - using move as defualt
         "function": "move",
-
         // [Nodemailer Single Connection](https://nodemailer.com/smtp/#1-single-connection)
         "smtp": {
             "email": "group@domain.com",
