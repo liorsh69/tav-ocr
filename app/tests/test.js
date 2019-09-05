@@ -99,11 +99,6 @@ describe('Read QR Code', async function() {
 	const originalPdfTestFilePath = path.resolve(__dirname, 'docs', 'qrTest.pdf')
 	const testPdfTestFilePath = path.resolve(__dirname, 'watch', 'qrTest.pdf')
 
-	// delete folder if exists
-	if (fs.existsSync(newTestFolder)) {
-		fse.removeSync(newTestFolder)
-	}
-
 	copyFile(originalPdfTestFilePath, testPdfTestFilePath)
 
 	it('should read QR code from pdf file', function(done) {
@@ -112,27 +107,33 @@ describe('Read QR Code', async function() {
 		setTimeout(done, 15000)
 	})
 
-	it('should move the pdf file', async function(done) {
-		testWatcher.close()
+	it('should move the pdf file', function(done) {
+		new Promise(async resolve => {
+			testWatcher.close()
 
-		const testAction = readJson(path.resolve(__dirname, '../', 'config', 'types.json'))
-		const resolvedFileTemplate = await resolveTemplate(testParameters, testAction.test.path)
+			const testAction = readJson(path.resolve(__dirname, '../', 'config', 'types.json'))
+			const resolvedFileTemplate = await resolveTemplate(testParameters, testAction.test.path)
 
-		const fileFound = fs.existsSync(path.resolve(resolvedFileTemplate))
-		if (!fileFound) {
-			console.error('File Not Found')
-			console.error(resolvedFileTemplate)
-		}
-		expect(fileFound).to.equal(true)
-		done()
+			const fileFound = fs.existsSync(path.resolve(resolvedFileTemplate))
+			if (!fileFound) {
+				console.error('File Not Found')
+				console.error(resolvedFileTemplate)
+			}
+			expect(fileFound).to.equal(true)
+			resolve()
+		})
+			.then(done())
+			.catch(console.error)
 	})
 
 	it('should clean test files', function(done) {
-		if (fs.existsSync(newTestFolder)) {
-			fse.removeSync(newTestFolder)
-		}
+		setTimeout(() => {
+			if (fs.existsSync(newTestFolder)) {
+				fse.removeSync(newTestFolder)
+			}
 
-		fse.emptyDirSync(path.resolve(testWatchFolder, 'temp'))
-		done()
+			fse.emptyDirSync(path.resolve(testWatchFolder, 'temp'))
+			done()
+		}, 3000)
 	})
 })

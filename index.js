@@ -21,6 +21,8 @@ const moment = require('moment')
 const Promise = require('bluebird')
 const sql = require('mssql')
 
+const sqlResultsArr = []
+
 const DEV_MODE = !false
 
 // log to file
@@ -171,12 +173,34 @@ function handlePdfFile(pdfFile) {
 						return false
 					}
 
-					const actionFunctionResult = actionFunction(pdfFile, jsonResult, action)
+					if (funcDone) {
+						logger.info('Function Done Already')
+						return false
+					}
+
+					const actionFunctionResult = await actionFunction(pdfFile, jsonResult, action).catch(logger.error)
+
+					if (funcDone) {
+						logger.info('Function Done Already')
+						return false
+					}
+
+					console.log('actionFunctionResult: ' + JSON.stringify(actionFunctionResult))
 
 					if (!actionFunctionResult || !actionFunctionResult.result) {
 						logger.warn('Unsuccessfully Action Function')
 						return false
 					}
+
+					console.log(
+						'SMTP: ' +
+							JSON.stringify({
+								from: settings.smtp.auth.user,
+								to: action.smtp.email,
+								subject: await resolveTemplate(jsonResult, action.smtp.subject),
+								html: `<a href="${actionFunctionResult.smtp.link}">${actionFunctionResult.smtp.link}</a>`,
+							})
+					)
 
 					if (action.smtp) {
 						logger.info(`Sending Email:  ${action.smtp.email}`)
@@ -198,26 +222,30 @@ function handlePdfFile(pdfFile) {
 }
 
 async function move(pdfFile, jsonResult, action) {
-	// resolve file destination from QR JSON result
-	const finalFileDestination = await resolveTemplate(jsonResult, action.path)
-	const finalDestinationFolder = path.dirname(finalFileDestination)
+	return new Promise(async (resolve, reject) => {
+		// resolve file destination from QR JSON result
+		const finalFileDestination = await resolveTemplate(jsonResult, action.path)
+		const finalDestinationFolder = path.dirname(finalFileDestination)
 
-	if (!finalDestinationFolder) {
-		logger.error(`finalDestination error - ${coordinatesIdx}: ${finalDestinationFolder}`)
-		return false
-	}
+		if (!finalDestinationFolder) {
+			logger.error(`finalDestination error - ${coordinatesIdx}: ${finalDestinationFolder}`)
+			resolve(false)
+		}
 
-	// create finalDestinationFolder folder if doesn't exists
-	const folderCreated = createFolder(finalDestinationFolder)
+		// create finalDestinationFolder folder if doesn't exists
+		const folderCreated = await createFolder(finalDestinationFolder)
+		const fileMoved = await moveFile(pdfFile, finalFileDestination)
 
-	const fileMoved = moveFile(pdfFile, finalFileDestination)
+		console.log('folderCreated: ' + folderCreated)
+		console.log('fileMoved: ' + fileMoved)
 
-	return {
-		result: folderCreated && fileMoved,
-		smtp: {
-			link: finalFileDestination,
-		},
-	}
+		resolve({
+			result: folderCreated && fileMoved,
+			smtp: {
+				link: finalFileDestination,
+			},
+		})
+	})
 }
 
 /** convert image QR code to text
@@ -322,30 +350,30 @@ function convertPdf2Jpg(pdfFile, outputFolder) {
  * @param {*} fileToMove
  * @param {*} destinationPath
  */
-function moveFile(fileToMove, destinationPath) {
-	logger.info('Moving File')
-	logger.info(`From: ${fileToMove}`)
-	logger.info(`To: ${destinationPath}`)
+async function moveFile(fileToMove, destinationPath) {
+	return new Promise(resolve => {
+		logger.info('Moving File')
+		logger.info(`From: ${fileToMove}`)
+		logger.info(`To: ${destinationPath}`)
 
-	const fileToMoveExt = path.extname(fileToMove)
-	const fileToMoveName = path.basename(fileToMove, fileToMoveExt)
+		const fileToMoveExt = path.extname(fileToMove)
+		const fileToMoveName = path.basename(fileToMove, fileToMoveExt)
 
-	try {
-		fse.move(fileToMove, destinationPath, { overwrite: true }, err => {
-			if (err) {
-				logger.error(`moveFile rename Failed: ${err}`)
-				return false
-			} else {
-				logger.info(`${fileToMoveName} - Successfully moved`)
-				return true
-			}
-		})
-	} catch (error) {
-		logger.error(`moveFile Failed: ${error}`)
-		return false
-	}
-
-	return false
+		try {
+			fse.move(fileToMove, destinationPath, { overwrite: true }, err => {
+				if (err) {
+					logger.error(`moveFile rename Failed: ${err}`)
+					resolve(false)
+				} else {
+					logger.info(`${fileToMoveName} - Successfully moved`)
+					resolve(true)
+				}
+			})
+		} catch (error) {
+			logger.error(`moveFile Failed: ${error}`)
+			resolve(false)
+		}
+	})
 }
 
 /** copy file
@@ -405,29 +433,36 @@ async function resolveTemplate(jsonObject, template) {
 
 	if (poolPromise && templateUnresolved) {
 		logger.info(`templateUnresolved: ` + templateUnresolved)
-		// get sql query result in json
-		try {
-			const pool = await poolPromise
 
-			const sqlQuery = `SELECT VHWHLO AS "com", VHPRNO AS "pn", VHMFNO AS "mo", VHBANO AS "lot" FROM MVXJDTA.MWOHED WHERE VHBANO='${jsonObject.lot}'`
-			logger.info('SQL Query:')
-			logger.info(sqlQuery)
-			const sqlResultObj = await pool.request().query(sqlQuery)
-			const sqlResult = sqlResultObj.recordset[0]
+		// try to get sql result if already exists
+		let sqlResult = sqlResultsArr[jsonObject.lot]
 
-			logger.info('SQL RESULT: ' + JSON.stringify(sqlResult)) // TEST
+		if (!sqlResult) {
+			// get sql query result in json
 
-			// loop over sql json result
-			for (var key in sqlResult) {
-				const param = sqlResult[key].replace(new RegExp(/[(\s)(\t)]/, 'g'), '')
+			try {
+				const pool = await poolPromise
+				const sqlQuery = `SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SELECT VHWHLO AS "com", VHPRNO AS "pn", VHMFNO AS "mo", VHBANO AS "lot" FROM MVXJDTA.MWOHED WHERE VHBANO='${jsonObject.lot}'`
+				logger.info('SQL Query: ' + sqlQuery)
 
-				logger.info(`${key}: ${param}`)
+				const sqlResultObj = await pool.request().query(sqlQuery)
+				sqlResult = sqlResultObj.recordset[0]
+				sqlResultsArr[jsonObject.lot] = sqlResult
 
-				const objectKeysRegex = new RegExp(`\\$${key}\\$`, 'g')
-				tempTemplate = tempTemplate.replace(objectKeysRegex, param)
+				logger.info('SQL RESULT: ' + JSON.stringify(sqlResult))
+			} catch (error) {
+				logger.error(`SQL Query Error: ` + error)
 			}
-		} catch (error) {
-			logger.error(`SQL Query Error: ` + error)
+		}
+
+		// loop over sql json result
+		for (var key in sqlResult) {
+			const param = sqlResult[key].replace(new RegExp(/[(\s)(\t)]/, 'g'), '')
+
+			logger.info(`${key}: ${param}`)
+
+			const objectKeysRegex = new RegExp(`\\$${key}\\$`, 'g')
+			tempTemplate = tempTemplate.replace(objectKeysRegex, param)
 		}
 	}
 
@@ -443,18 +478,23 @@ async function resolveTemplate(jsonObject, template) {
 /** create folder recursively if not exists
  * @param {*} folderPath
  */
-function createFolder(folderPath) {
-	if (!fs.existsSync(folderPath)) {
+async function createFolder(folderPath) {
+	return new Promise(resolve => {
+		if (!fs.existsSync(folderPath)) {
+			resolve(true)
+		}
+
 		logger.info(`Creating New Folder: ${folderPath}`)
 		try {
 			shell.mkdir('-p', folderPath)
-			return true
+			resolve(true)
 		} catch (error) {
 			logger.error(`cannot create folder: ${folderPath}`)
-			return false
+			resolve(false)
 		}
-	}
-	return false
+
+		resolve(false)
+	})
 }
 
 // log to file
