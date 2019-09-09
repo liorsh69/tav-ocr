@@ -417,6 +417,10 @@ async function resolveTemplate(jsonObject, template) {
 
 	logger.info(`resolveTemplate - Replacing Template: ${template}`)
 
+	// replace today's date in template
+	tempTemplate = tempTemplate.replace(new RegExp(`\\$today\\$`, 'g'), moment().format('DD-MM-YY'))
+	tempTemplate = tempTemplate.replace('__dirname', __dirname)
+
 	// loop over all json keys and replace in template
 	for (var key in jsonObject) {
 		const param = jsonObject[key]
@@ -465,10 +469,6 @@ async function resolveTemplate(jsonObject, template) {
 			tempTemplate = tempTemplate.replace(objectKeysRegex, param)
 		}
 	}
-
-	// replace today's date in template
-	tempTemplate = tempTemplate.replace(new RegExp(`\\$today\\$`, 'g'), moment().format('DD-MM-YY'))
-	tempTemplate = tempTemplate.replace('__dirname', __dirname)
 
 	logger.info(`resolveTemplate - Template Resolved: ${tempTemplate}`)
 
@@ -528,7 +528,7 @@ function initSmtp() {
 	// verify connection configuration
 	transporter.verify(function(error, success) {
 		if (error) {
-			logger.error(error)
+			logger.error('SMTP Error: ' + error)
 		} else {
 			logger.info('SMTP Server is ready')
 		}
