@@ -7,7 +7,8 @@
 		"start": "node index.js",
 		"install-windows-service": "winser -i",
 		"uninstall-windows-service": "winser -r",
-		"test": "cls && mocha app/tests/test.js"
+		"test": "cls && mocha app/core/helpers/*.test.js",
+		"single-test": "cls && mocha app/core/helpers/template.test.js"
 	},
 	"author": "Lior Shitrit",
 	"license": "ISC",
@@ -20,12 +21,13 @@
 		"jsqr": "^1.2.0",
 		"moment": "^2.24.0",
 		"mssql": "^5.1.0",
+		"nconf": "^0.10.0",
 		"nodemailer": "^6.1.1",
 		"pdf-poppler": "^0.2.1",
-		"qrcode-reader": "^1.0.4",
 		"shelljs": "^0.8.3",
 		"winser": "^1.0.3",
-		"winston": "^3.2.1"
+		"winston": "^3.2.1",
+		"winston-daily-rotate-file": "^4.0.0"
 	},
 	"devDependencies": {
 		"chai": "^4.2.0",

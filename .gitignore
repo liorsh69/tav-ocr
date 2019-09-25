@@ -1,5 +1,5 @@
 node_modules
-console.log
 app/config/private/*
 app/tests/docs/qrTest.docx
 *.db
+logs/*
