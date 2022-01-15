@@ -24,7 +24,7 @@
 		"nconf": "^0.10.0",
 		"nodemailer": "^6.1.1",
 		"pdf-poppler": "^0.2.1",
-		"shelljs": "^0.8.3",
+		"shelljs": "^0.8.5",
 		"winser": "^1.0.3",
 		"winston": "^3.2.1",
 		"winston-daily-rotate-file": "^4.0.0"
